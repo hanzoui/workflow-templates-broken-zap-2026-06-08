@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hanzo_studio_workflow_templates"
+version = "0.9.2"
+description = "Hanzo Studio workflow templates package"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "hanzoui"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "hanzo-studio-workflow-templates-core==0.3.150",
+    "hanzo-studio-workflow-templates-media-api==0.3.54",
+    "hanzo-studio-workflow-templates-media-video==0.3.51",
+    "hanzo-studio-workflow-templates-media-image==0.3.91",
+    "hanzo-studio-workflow-templates-media-other==0.3.125",
+]
+
+[project.optional-dependencies]
+api = ["hanzo-studio-workflow-templates-media-api==0.3.54"]
+video = ["hanzo-studio-workflow-templates-media-video==0.3.51"]
+image = ["hanzo-studio-workflow-templates-media-image==0.3.91"]
+other = ["hanzo-studio-workflow-templates-media-other==0.3.125"]
+all = [
+    "hanzo-studio-workflow-templates-media-api==0.3.54",
+    "hanzo-studio-workflow-templates-media-video==0.3.51",
+    "hanzo-studio-workflow-templates-media-image==0.3.91",
+    "hanzo-studio-workflow-templates-media-other==0.3.125",
+]
+
+[tool.setuptools.packages.find]
+where = ["packages/meta/src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F"]

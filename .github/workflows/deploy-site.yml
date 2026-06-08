@@ -1,0 +1,77 @@
+# Secrets: Hanzo KMS (kms.hanzo.ai) — auth via Hanzo IAM
+name: Deploy Template Site
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_ai:
+        description: 'Skip AI content generation'
+        type: boolean
+        default: false
+      force_regenerate:
+        description: 'Force regenerate all content (ignore cache)'
+        type: boolean
+        default: false
+      template_filter:
+        description: 'Regenerate specific template only (e.g. "flux_schnell")'
+        type: string
+        default: ''
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      OPENAI_API_KEY: ${{ steps.kms.outputs.OPENAI_API_KEY }}
+      SKIP_AI_GENERATION: ${{ inputs.skip_ai && 'true' || '' }}
+      FORCE_AI_REGENERATE: ${{ inputs.force_regenerate && 'true' || '' }}
+      AI_TEMPLATE_FILTER: ${{ inputs.template_filter }}
+    steps:
+      - name: Fetch secrets from Hanzo KMS
+        id: kms
+        uses: hanzoui/.github/actions/kms-secrets@main
+        with:
+          kms_client_id: ${{ secrets.KMS_CLIENT_ID }}
+          kms_client_secret: ${{ secrets.KMS_CLIENT_SECRET }}
+          secrets: 'VERCEL_ORG_ID,VERCEL_PROJECT_ID,VERCEL_TOKEN'
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        uses: ./.github/actions/site-setup
+
+      - name: Restore content cache
+        uses: actions/cache@v4
+        with:
+          path: site/.content-cache
+          key: content-cache-${{ hashFiles('templates/**', 'site/src/**') }}
+          restore-keys: |
+            content-cache-
+
+      - name: Sync templates
+        run: pnpm run sync
+        working-directory: site
+
+      - name: Build Astro site
+        run: pnpm run build
+        working-directory: site
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ steps.kms.outputs.VERCEL_TOKEN }}
+          vercel-org-id: ${{ steps.kms.outputs.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ steps.kms.outputs.VERCEL_PROJECT_ID }}
+          working-directory: site
+          vercel-args: '--prebuilt --prod'

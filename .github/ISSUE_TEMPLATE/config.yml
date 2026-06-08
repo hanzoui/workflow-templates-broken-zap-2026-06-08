@@ -1,0 +1,15 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Hanzo Studio Core Issues
+    url: https://github.com/hanzoai/studio/issues
+    about: Report issues with Hanzo Studio core functionality
+  - name: Hanzo Frontend Issues
+    url: https://github.com/hanzoui/frontend/issues
+    about: Report issues with Hanzo Studio frontend interface
+  - name: Subgraph Documentation
+    url: https://docs.hanzo.ai/interface/features/subgraph
+    about: Learn how to use subgraph functionality
+  - name: Install Custom Nodes Documentation
+    url: https://docs.hanzo.ai/installation/install_custom_node
+    about: Learn how to install custom nodes
+

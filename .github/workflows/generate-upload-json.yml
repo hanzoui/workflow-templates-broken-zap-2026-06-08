@@ -1,0 +1,135 @@
+name: Generate Upload JSON
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'input/**'
+      - 'templates/index.json'
+      - 'scripts/check_input_assets.py'
+  pull_request:
+    paths:
+      - 'input/**'
+      - 'templates/index.json'
+      - 'scripts/check_input_assets.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-json:
+    runs-on: ubuntu-latest
+    # Only run on same-repo PRs and push events (skip fork PRs as they can't auto-commit)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Validate input assets and generate upload JSON
+        id: validate
+        run: |
+          python scripts/check_input_assets.py --generate-upload-json 2>&1 | tee validation_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+      
+      - name: Check if JSON was generated
+        id: check_json
+        run: |
+          if [ -f "workflow_template_input_files.json" ]; then
+            echo "json_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ workflow_template_input_files.json was generated"
+            
+            # Show file stats
+            FILE_SIZE=$(stat -f%z "workflow_template_input_files.json" 2>/dev/null || stat -c%s "workflow_template_input_files.json" 2>/dev/null)
+            ASSET_COUNT=$(jq '.assets | length' workflow_template_input_files.json)
+            echo "📊 File size: ${FILE_SIZE} bytes"
+            echo "📊 Asset count: ${ASSET_COUNT}"
+            echo "asset_count=${ASSET_COUNT}" >> $GITHUB_OUTPUT
+          else
+            echo "json_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ workflow_template_input_files.json was not generated"
+          fi
+      
+      - name: Upload artifact
+        if: steps.check_json.outputs.json_exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-template-input-files
+          path: workflow_template_input_files.json
+          retention-days: 30
+      
+      - name: Commit and push if changed
+        id: commit
+        if: steps.check_json.outputs.json_exists == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          if [ -n "$(git status --porcelain workflow_template_input_files.json)" ]; then
+            git add workflow_template_input_files.json
+
+            # Commit message
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              COMMIT_MSG="chore: update workflow_template_input_files.json (PR #${{ github.event.pull_request.number }})"
+            else
+              COMMIT_MSG="chore: update workflow_template_input_files.json [skip ci]"
+            fi
+
+            git commit -m "$COMMIT_MSG"
+
+            # Push to the appropriate branch
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              git push origin HEAD:${{ github.head_ref }}
+            else
+              git push
+            fi
+
+            echo "✅ Changes committed and pushed"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ No changes to commit"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR (only if changes were made)
+        if: github.event_name == 'pull_request' && steps.commit.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `✅ **Upload JSON updated** - ${{ steps.check_json.outputs.asset_count }} assets`
+            });
+
+      - name: Comment on PR if failed
+        if: github.event_name == 'pull_request' && failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let output = '';
+            try {
+              output = fs.readFileSync('validation_output.txt', 'utf8').slice(-500);
+            } catch (e) {
+              output = 'Unable to read output';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `❌ **Upload JSON generation failed**\n\n\`\`\`\n${output}\n\`\`\``
+            });

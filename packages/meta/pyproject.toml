@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hanzo-studio-workflow-templates"
+version = "0.3.6"
+description = "Meta package for Hanzo Studio workflow templates"
+readme = {text = "Meta package that depends on all Hanzo Studio workflow template bundles.", content-type = "text/plain"}
+requires-python = ">=3.9"
+license = "MIT"
+dependencies = [
+    "hanzo-studio-workflow-templates-core>=0.3.1",
+    "hanzo-studio-workflow-templates-media-api>=0.3.4",
+    "hanzo-studio-workflow-templates-media-video>=0.3.1",
+    "hanzo-studio-workflow-templates-media-image>=0.3.4",
+    "hanzo-studio-workflow-templates-media-other>=0.3.4"
+]
+
+[project.optional-dependencies]
+api = ["hanzo-studio-workflow-templates-media-api>=0.3.4"]
+video = ["hanzo-studio-workflow-templates-media-video>=0.3.1"]
+image = ["hanzo-studio-workflow-templates-media-image>=0.3.4"]
+other = ["hanzo-studio-workflow-templates-media-other>=0.3.4"]
+all = [
+    "hanzo-studio-workflow-templates-media-api>=0.3.4",
+    "hanzo-studio-workflow-templates-media-video>=0.3.1",
+    "hanzo-studio-workflow-templates-media-image>=0.3.4",
+    "hanzo-studio-workflow-templates-media-other>=0.3.4"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

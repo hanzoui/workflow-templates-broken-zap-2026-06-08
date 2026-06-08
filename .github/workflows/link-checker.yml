@@ -1,0 +1,221 @@
+name: Link Checker
+
+on:
+  push:
+    paths:
+      - 'templates/**.json'
+      - 'scripts/check_links.py'
+      - '.github/workflows/link-checker.yml'
+  pull_request:
+    paths:
+      - 'templates/**.json'
+      - 'scripts/check_links.py'
+      - '.github/workflows/link-checker.yml'
+
+permissions:
+  contents: read
+  pull-requests: write  # Allow commenting on PRs
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install lychee
+        run: |
+          curl -sSL https://github.com/lycheeverse/lychee/releases/latest/download/lychee-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+          sudo mv lychee /usr/local/bin/
+          lychee --version
+
+      - name: Extract links from JSON workflows
+        id: extract_links
+        run: |
+          echo "Extracting links from JSON workflow files..."
+          python3 scripts/check_links.py extract > extracted_links.txt 2>&1 || echo "extract_failed=true" >> $GITHUB_OUTPUT
+          cat extracted_links.txt
+
+          # Check if extraction succeeded
+          if [ -f "links_to_check.txt" ] && [ -s "links_to_check.txt" ]; then
+            echo "extract_failed=false" >> $GITHUB_OUTPUT
+            echo "Found $(wc -l < links_to_check.txt) links to check"
+          else
+            echo "extract_failed=true" >> $GITHUB_OUTPUT
+            echo "::warning::No links found to check"
+          fi
+
+      - name: Check links with lychee
+        id: lychee
+        if: steps.extract_links.outputs.extract_failed == 'false'
+        run: |
+          echo "Checking extracted links..."
+          link_errors=false
+
+          # lychee may exit non-zero for bad links; disable -e to keep script running
+          set +e
+          lychee \
+            --verbose \
+            --no-progress \
+            --accept 100..=103,200..=299,429 \
+            --timeout 20 \
+            --max-retries 3 \
+            --exclude 'linkedin\.com' \
+            --exclude 'facebook\.com' \
+            --exclude 'twitter\.com' \
+            --exclude 'x\.com' \
+            --format markdown \
+            --output lychee-report.md \
+            links_to_check.txt
+
+          LYCHEE_EXIT=$?
+          set -e
+
+          # If lychee itself failed (non-accepted status codes, network errors, etc.)
+          if [ $LYCHEE_EXIT -ne 0 ]; then
+            link_errors=true
+          fi
+
+          if [ -f lychee-report.md ]; then
+            cat lychee-report.md
+
+            # Table-format errors (previous behavior)
+            if sed -n '/🚫 Errors/,/^$/p' lychee-report.md | grep -q "^| \["; then
+              link_errors=true
+            fi
+
+            # Bullet-format errors (e.g., "* [404] ...") under "Errors in ..." sections
+            if awk '
+              /Errors in/ { err=1; next }
+              /^## / { err=0 }
+              err && /^\* \[/ { exit 0 }
+              END { exit 1 }
+            ' lychee-report.md; then
+              link_errors=true
+            fi
+
+            if [ "$link_errors" = true ]; then
+              echo "::error::Broken links found in workflow files"
+            fi
+          fi
+
+          echo "link_errors=$link_errors" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Generate excluded links report
+        id: excluded_report
+        if: steps.extract_links.outputs.extract_failed == 'false'
+        run: |
+          echo "Generating excluded links report..."
+          python3 scripts/check_links.py report-excluded > excluded_links.txt 2>&1 || true
+          if [ -f "excluded_links.txt" ]; then
+            cat excluded_links.txt
+          fi
+
+      - name: Generate detailed report for artifacts
+        if: steps.extract_links.outputs.extract_failed == 'false'
+        run: |
+          echo "Generating detailed link report for artifacts..."
+          python3 scripts/check_links.py report > link_report_detailed.txt 2>&1 || true
+
+      - name: Comment on PR about link errors
+        if: github.event_name == 'pull_request' && steps.lychee.outputs.link_errors == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Read link checker report (only errors)
+            let lycheeReport = '';
+            try {
+              lycheeReport = fs.readFileSync('lychee-report.md', 'utf8');
+            } catch (error) {
+              lycheeReport = 'Unable to read lychee report';
+            }
+
+            // Keep only error rows (bullet or table), drop successful links/redirects
+            const lycheeLines = lycheeReport.split('\n');
+            const errors = [];
+            let inErrorBlock = false;
+
+            for (const line of lycheeLines) {
+              // End error block when hitting a new section
+              if (line.startsWith('##')) {
+                if (line.startsWith('### Errors in') || line.startsWith('🚫 Errors')) {
+                  inErrorBlock = true;
+                  continue;
+                } else {
+                  inErrorBlock = false;
+                  continue;
+                }
+              }
+
+              // Capture error lines
+              if (inErrorBlock) {
+                if (line.startsWith('* [') || line.startsWith('| [')) {
+                  errors.push(line);
+                }
+              }
+            }
+
+            const hasParsedErrors = errors.length > 0;
+            const lycheeErrorsOnly = hasParsedErrors ? errors.join('\n') : '';
+
+            // Read excluded links report
+            let excludedReport = '';
+            try {
+              excludedReport = fs.readFileSync('excluded_links.txt', 'utf8');
+            } catch (error) {
+              excludedReport = '';
+            }
+
+            // Truncate if too long (GitHub comment limit)
+            const maxLength = 60000;
+            if (hasParsedErrors) {
+              lycheeReport =
+                lycheeErrorsOnly.length > maxLength
+                  ? lycheeErrorsOnly.substring(0, maxLength) + '\n\n...(Report truncated due to length)'
+                  : lycheeErrorsOnly;
+            } else {
+              lycheeReport = 'Lychee reported an error (non-zero exit) but no broken-link rows were parsed. Please check artifacts for details.';
+            }
+
+            const comment = `## ❌ Broken Links Found
+
+            ${lycheeReport}
+
+            ${excludedReport ? '**Excluded:**\n' + excludedReport + '\n\n' : ''}
+            **Fix:** Update or remove broken URLs in workflow files. Check artifacts for full report.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: link-check-reports
+          path: |
+            extracted_links.txt
+            links_to_check.txt
+            lychee-report.md
+            excluded_links.txt
+            link_report_detailed.txt
+          retention-days: 7
+
+      - name: Fail if broken links found
+        if: steps.lychee.outputs.link_errors == 'true'
+        run: |
+          echo "❌ Broken links detected in workflow files!"
+          echo "Please fix the broken links listed in the report above."
+          exit 1

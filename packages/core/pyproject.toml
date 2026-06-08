@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hanzo-studio-workflow-templates-core"
+version = "0.3.150"
+description = "Core helpers for Hanzo Studio workflow templates"
+readme = {text = "Core helpers for Hanzo Studio workflow templates.", content-type = "text/plain"}
+requires-python = ">=3.9"
+license = "MIT"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hanzo_studio_workflow_templates_core = ["manifest.json"]
